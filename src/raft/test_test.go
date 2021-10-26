@@ -850,7 +850,11 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int()%10000, servers, true)
+	cmd := rand.Int()%10000
+
+	Debug(dTest, "Test8Unreliable: last cmd %v", cmd)
+
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }

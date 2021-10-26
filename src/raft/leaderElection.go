@@ -8,7 +8,7 @@ import (
 const (
 	HeartBeatTimeOut = 100 * time.Millisecond
 	ElectionTimeOutMin = 400
-	ElectionTimeOutMax = 500
+	ElectionTimeOutMax = 700
 )
 
 type RequestVoteArgs struct {
@@ -25,26 +25,25 @@ type RequestVoteReply struct {
 	VoteGranted 		bool 	// true means candidates received vote
 }
 
-
+// RequestVoteHandler
+// example RequestVoteHandler RPC handler.
 //
-// example RequestVote RPC handler.
-//
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	noNeedToPersist := rf.preRPCHandler(args.Term) // update current term, votedFor
+	rf.newTermCheckL(args.Term)
+	//noNeedToPersist := rf.preRPCHandlerL(args.Term) // update current term, votedFor
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	isConsistent := true
 
 	if args.Term < rf.currentTerm {
-		isConsistent = false
+		return
 	}
-	if isConsistent && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) {
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		// did not vote for this term or has voted this candidate, repeated req
 		isEmpty := len(rf.log) == 0
 		if isEmpty {
@@ -62,20 +61,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
-	if isConsistent && reply.VoteGranted { // voting the for the candidate
+	if reply.VoteGranted { // voting the for the candidate
 		rf.votedFor = args.CandidateId
-		rf.resettingElectionTimer() // resetting the timer
-		noNeedToPersist = false
-	}
-
-	if !noNeedToPersist {
+		rf.resettingElectionTimerL() // resetting the timer
 		rf.persist()
 	}
+
 
 }
 
 //
-// example code to send a RequestVote RPC to a server.
+// example code to send a RequestVoteHandler RPC to a server.
 // server is the index of the target server in rf.peers[].
 // expects RPC arguments in args.
 // fills in *reply with RPC reply, so caller should
@@ -104,49 +100,64 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	ok := rf.peers[server].Call("Raft.RequestVoteHandler", args, reply)
 	return ok
 }
 
+// New term found
+func (rf *Raft) newTermCheckL(foundTerm int) {
+	if foundTerm > rf.currentTerm {
+		Debug(dInfo, "S%d found new Term T%d, L%d",
+			rf.me, foundTerm, rf.currentTerm)
+
+		rf.currentTerm = foundTerm
+		rf.becomeFollowerL()
+		rf.persist()
+	}
+}
 
 // will be called holding the lock
-func (rf *Raft) resettingElectionTimer() {
+func (rf *Raft) resettingElectionTimerL() {
+	Debug(dTimer, "S%d is resetting Election timer.", rf.me)
 	rf.lastHeartBeat = time.Now()
 	rf.electionTimeOut = rand.Intn(ElectionTimeOutMax - ElectionTimeOutMin) +
 		ElectionTimeOutMin
 }
 
 // It will always be called holding mu lock
-func (rf *Raft) preRPCHandler(foundTerm int) bool {
+func (rf *Raft) preRPCHandlerL(foundTerm int) bool {
 	if foundTerm > rf.currentTerm {
 		rf.currentTerm = foundTerm
-		rf.becomeFollower()
+		rf.becomeFollowerL()
+		rf.persist()
 		return false
 	}
 	return true
 }
 // Called after holding mu lock
 
-func (rf *Raft) becomeLeader() {
+func (rf *Raft) becomeLeaderL(term int) {
+
+	Debug(dTerm,"S%d becomes leader on T%d", rf.me, term)
+
 	rf.state = Leader
-	rf.resettingElectionTimer()
+	rf.resettingElectionTimerL()
 
-	rf.nextIndex = make([]int, len(rf.peers))
-	rf.matchIndex = make([]int, len(rf.peers))
-
-	for ind, _ := range rf.nextIndex {
-		rf.nextIndex[ind] = len(rf.log)
+	for ind := range rf.peers {
+		if ind == rf.me {
+			continue
+		}
+		rf.nextIndex[ind] = len(rf.log) // FIXME log
+		rf.matchIndex[ind] = -1 		// FIXME log
 	}
-	for ind, _ := range rf.matchIndex {
-		rf.matchIndex[ind] = -1
-	}
-
-	go rf.updateLeaderCommitIndex()
+	go rf.sendHeartBeat(term)
+	go rf.updateLeaderCommitIndex(term)
 	// need some nextInd resetting for 2B, 2C
 }
 
 // Also called holding the mu lock
-func (rf *Raft) becomeFollower(){
+func (rf *Raft) becomeFollowerL(){
+	Debug(dInfo, "S%d -> follower at T%d", rf.me, rf.currentTerm)
 	rf.votedFor = -1
 	rf.state = Follower
 }
@@ -173,26 +184,28 @@ func (rf *Raft) prepareForAnElection() {
 	rf.votedFor = rf.me
 	rf.state = Candidate
 	rf.currentTerm++
-	rf.resettingElectionTimer()
+	Debug(dVote, "S%d ELT elapsed. Candidate at T%d",
+		rf.me, rf.currentTerm)
+	rf.resettingElectionTimerL()
+	rf.persist()
 }
 
 func (rf *Raft) kickOffAnElection() {
 	rf.mu.Lock()
-
+	defer rf.mu.Unlock()
 	rf.prepareForAnElection()
-	voteCount := 1  // voting for itself
-	result := 1
 
-	DPrintf("[%d] Starting An election at term #%d", rf.me, rf.currentTerm)
+	voteCount := 1  // voting for itself
+	setLeader := 0 	// for checking at most once it is set leader at this term
+
 	askedVoteTerm := rf.currentTerm // for local use
-	lastLogIndex, lastLogTerm := -1, -1
+	lastLogIndex, lastLogTerm := -1, -1 // FIXME log
 
 	if len(rf.log) > 0 {
 		lastLogIndex = len(rf.log) - 1
 		lastLogTerm = rf.log[lastLogIndex].Term
 	}
-	rf.persist()
-	rf.mu.Unlock()
+
 
 	for ind,_ := range rf.peers {
 		if ind == rf.me {
@@ -207,54 +220,33 @@ func (rf *Raft) kickOffAnElection() {
 			}
 			reply := RequestVoteReply{}
 			ok := rf.sendRequestVote(curInd, &args, &reply)
-			if !ok {		// error in the RPC, so no vote :3
-				return
-			}
+			if !ok {return}
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			result++
 
-			noNeedToPersist := rf.preRPCHandler(reply.Term) // check whether you had an old term
-
-			if !noNeedToPersist {
-				rf.persist()
-			}
+			rf.newTermCheckL(reply.Term)
 
 			if rf.currentTerm != askedVoteTerm || rf.state != Candidate {
 				return
 			}
 			if reply.VoteGranted {
-				voteCount++  // use synchronous variable here
+				Debug(dVote, "S%d <- S%d Got vote", rf.me, curInd)
+				voteCount++
+				if voteCount * 2 > len(rf.peers) {
+					// won the selection
+					rf.becomeLeaderL(rf.currentTerm)
+
+					setLeader++
+					// failing explicitly
+					if setLeader > 1 {
+						Debug(dError, "S%d at T%d selected leader more than once",
+							rf.me, rf.currentTerm)
+						panic("Leader more than once in a term")
+					}
+				}
+
 			}
 		}(ind, lastLogIndex, lastLogTerm)
 	}
-
-	for {
-		rf.mu.Lock()
-		if voteCount * 2 < len(rf.peers) && result < len(rf.peers) {
-			rf.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)
-		} else {
-			break
-		}
-	}
-	defer rf.mu.Unlock()
-
-	if rf.state != Candidate || rf.currentTerm != askedVoteTerm {
-		return
-	}
-	if voteCount * 2 >= len(rf.peers) {
-		// won the selection
-		rf.becomeLeader()
-		DPrintf("[%d] is becoming the leader at term #%d", rf.me, rf.currentTerm)
-		go rf.sendHeartBeat()
-		//
-	} else {
-		// become follower
-		rf.becomeFollower()
-		DPrintf("[%d] lost the election at term #%d", rf.me, rf.currentTerm)
-	}
-
-	rf.persist()
 }

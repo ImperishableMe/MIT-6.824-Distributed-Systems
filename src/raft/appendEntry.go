@@ -18,12 +18,12 @@ type AppendEntriesReply struct {
 }
 
 
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	noNeedToPersist := rf.preRPCHandler(args.Term)
+	noNeedToPersist := rf.preRPCHandlerL(args.Term)
 
 	if !noNeedToPersist {
 		defer rf.persist()
@@ -36,7 +36,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
-	rf.resettingElectionTimer() // supposedly got a heartbeat from leader
+
+	rf.resettingElectionTimerL() // supposedly got a heartbeat from leader
 
 	leaderPrevIndex := args.PrevLogIndex
 	leaderPrevTerm := args.PrevLogTerm
@@ -48,6 +49,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		} else if rf.log[leaderPrevIndex].Term != leaderPrevTerm {
 			conflictingTerm := rf.log[leaderPrevIndex].Term
+
 			pos := leaderPrevIndex
 			for pos >= 0 && rf.log[pos].Term == conflictingTerm {
 				pos--
@@ -99,7 +101,7 @@ func Min(a, b int) int {
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	ok := rf.peers[server].Call("Raft.AppendEntriesRequestHandler", args, reply)
 	return ok
 }
 
@@ -111,13 +113,13 @@ func (rf *Raft) appendEntriesDaemon() {
 		time.Sleep(HeartBeatTimeOut)
 		rf.mu.Lock()
 		if rf.state == Leader {
-			go rf.sendHeartBeat()
+			go rf.sendHeartBeat(rf.currentTerm)
 		}
 		rf.mu.Unlock()
 	}
 }
 
-func (rf *Raft) sendHeartBeat() {
+func (rf *Raft) sendHeartBeat(term int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -180,7 +182,7 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 		}
 		rf.mu.Lock()
 
-		latestTerm := rf.preRPCHandler(reply.Term)
+		latestTerm := rf.preRPCHandlerL(reply.Term)
 
 		if !latestTerm {
 			rf.persist()
