@@ -1,11 +1,11 @@
 package raft
 
 // ApplyMsg
-// as each Raft peer becomes aware that successive log entries are
+// as each Raft peer becomes aware that successive LogList entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
 // CommandValid to true to indicate that the ApplyMsg contains a newly
-// committed log entry.
+// committed LogList entry.
 //
 // in part 2D you'll want to send other kinds of messages (e.g.,
 // snapshots) on the applyCh, but set CommandValid to false for these
@@ -31,7 +31,3 @@ const (
 	Follower 	State = "Follower"
 )
 
-type LogEntry struct {
-	Cmd interface{}
-	Term int
-}

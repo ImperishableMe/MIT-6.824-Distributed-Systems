@@ -8,11 +8,11 @@ package raft
 // rf = Make(...)
 //   create a new Raft server.
 // rf.Start(command interface{}) (index, term, isleader)
-//   start agreement on a new log entry
+//   start agreement on a new LogList entry
 // rf.GetState() (term, isLeader)
 //   ask a Raft for its current term, and whether it thinks it is leader
 // ApplyMsg
-//   each time a new entry is committed to the log, each Raft peer
+//   each time a new entry is committed to the LogList, each Raft peer
 //   should send an ApplyMsg to the service (or tester)
 //   in the same server.
 //
@@ -41,12 +41,12 @@ type Raft struct {
 	// persistent
 	currentTerm 	int
 	votedFor		int       				// which peer got vote from me in currentTerm (votedFor can be me)
-	log 			[]LogEntry 				// first index is 1
+	log 			Log 					// first index is 1
 
 	// non volatile
 	commitIndex 	int 					// index of highest log entry known to be committed (
-											// initialized to -1, increases monotonically)
-	lastApplied 	int 					// index of highest log entry applied to state machine ( initialized to -1)
+											// initialized to 0, increases monotonically)
+	lastApplied 	int 					// index of highest log entry applied to state machine ( initialized to 0)
 
 	state 			State 					// current State of the raft instance
 	lastHeartBeat 	time.Time
@@ -99,7 +99,7 @@ func (rf *Raft) readPersist(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var currentTerm, votedFor int
-	var log []LogEntry
+	var log Log
 
 	if d.Decode(&currentTerm) != nil ||
 		d.Decode(&votedFor) != nil ||
@@ -125,8 +125,8 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 
 // the service says it has created a snapshot that has
 // all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
+// service no longer needs the LogList through (and including)
+// that index. Raft should now trim its LogList as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
 
@@ -134,10 +134,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 // Start
 // the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
+// agreement on the next command to be appended to Raft's LogList. if this
 // server isn't the leader, returns false. otherwise start the
 // agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
+// command will ever be committed to the Raft LogList, since the leader
 // may fail or lose an election. even if the Raft instance has been killed,
 // this function should return gracefully.
 //
@@ -158,16 +158,18 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, isLeader
 	}
 
-	index = len(rf.log) + 1 // FIXME log
-	rf.log = append(rf.log, LogEntry{
+	index = rf.log.lastIndex() + 1
+	rf.log.append(LogEntry{
 		Cmd:  command,
 		Term: rf.currentTerm,
 	})
 	term = rf.currentTerm
+
 	rf.persist()
 
-	Debug(dClient, "S%d New Command T:%d cmd: %v ind:%d",
-		rf.me, command, index)
+	Debug(dClient, "S%d New Command T:%d cmd: %v," +
+		"trying ind:%d",
+		rf.me, rf.currentTerm, command, index)
 
 	return index, term, isLeader
 }
@@ -212,8 +214,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.state = Follower
 	rf.votedFor = -1
-	rf.commitIndex = -1
-	rf.lastApplied = -1
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.log = mkLogEmpty()
 
 	Debug(dInfo, "S%d is live now at T:%d, VotF:%d",
 		rf.me, rf.currentTerm, rf.votedFor)
@@ -228,7 +231,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	go rf.electionDaemon()
-	go rf.appendEntriesDaemon()
+	//go rf.appendEntriesDaemon()
 	go rf.applyDaemon(applyCh)
 
 	return rf
@@ -238,17 +241,22 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 
 	for !rf.killed() {
 		rf.mu.Lock()
+
 		if rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			msg := ApplyMsg{
 				CommandValid: true,
-				Command:      rf.log[rf.lastApplied].Cmd,
-				CommandIndex: rf.lastApplied + 1,
+				Command:      rf.log.entry(rf.lastApplied).Cmd,
+				CommandIndex: rf.lastApplied,
 			}
-			DPrintf("[%d] is applying %v\n", rf.me, msg)
+			Debug(dCommit, "S%d applied new cmd-%v, cmdInd-%d",
+				rf.me, msg.Command, msg.CommandIndex)
+
 			rf.mu.Unlock()
 			applyCh <- msg
 		} else {
+			//Debug(dCommit, "S%d nothing new to apply(LA-%d >= CI-%d)",
+			//	rf.me, rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -259,12 +267,16 @@ func (rf *Raft) updateLeaderCommitIndex(term int) {
 
 	for !rf.killed() {
 		rf.mu.Lock()
-		if rf.state != Leader || rf.currentTerm != term{
+		if rf.state != Leader || rf.currentTerm != term {
 			rf.mu.Unlock()
 			break
 		}
-		for i := rf.commitIndex + 1; i < len(rf.log); i++ {
-			count := 1
+
+		for i := rf.commitIndex + 1; i <= rf.log.lastIndex(); i++ {
+			if rf.log.entry(i).Term != rf.currentTerm {
+				continue
+			}
+			count := 1  	// leader matched for sure
 			for ind, val := range rf.matchIndex {
 				if ind == rf.me {
 					continue
@@ -272,9 +284,10 @@ func (rf *Raft) updateLeaderCommitIndex(term int) {
 				if val >= i {
 					count++
 				}
-				if count * 2 >= len(rf.peers) && rf.log[i].Term == rf.currentTerm {
+				if count * 2 > len(rf.peers) {
 					rf.commitIndex = i
-					DPrintf("[%d] leader has the commitIndex %d\n",rf.me, rf.commitIndex)
+					Debug(dCommit, "S%d leader at T%d committed upto %d\n",
+						rf.me, rf.currentTerm, rf.commitIndex)
 					break
 				}
 			}

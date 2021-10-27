@@ -9,7 +9,7 @@ import (
 )
 
 
-// log type
+// LogList type
 type logTopic string
 const (
 	dClient  logTopic = "CLNT"

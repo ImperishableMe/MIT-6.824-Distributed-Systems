@@ -502,6 +502,8 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	starts := 0
 	for time.Since(t0).Seconds() < 10 {
 		// try all the servers, maybe one is the leader.
+		Debug(dTest, "Trying to commit %v", cmd)
+
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -523,12 +525,15 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
+			Debug(dTest, "Waiting for S%d to commit %v", index, cmd)
+
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
+						Debug(dTest, "S%d completed to commit %v", index, cmd)
 						// and it was the command we submitted.
 						return index
 					}
@@ -540,6 +545,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 		} else {
 			time.Sleep(50 * time.Millisecond)
+			Debug(dTest, "Failed last attempt to commit %v.", cmd)
 		}
 	}
 	cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)

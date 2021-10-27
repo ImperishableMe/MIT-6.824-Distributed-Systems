@@ -15,8 +15,8 @@ type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	Term 				int  	// candidate's term
 	CandidateId 		int   	// candidate requesting vote
-	LastLogIndex 		int 	// index of candidate's last log entry
-	LastLogTerm 		int 	// term of candidate's last log entry
+	LastLogIndex 		int 	// index of candidate's last LogList entry
+	LastLogTerm 		int 	// term of candidate's last LogList entry
 }
 
 type RequestVoteReply struct {
@@ -33,6 +33,9 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	Debug(dVote, "S%d <- S%d askedVote,info: T-%d LI-%d, LT-%d",
+		rf.me, args.CandidateId, args.Term, args.LastLogIndex, args.LastLogTerm)
+
 	rf.newTermCheckL(args.Term)
 	//noNeedToPersist := rf.preRPCHandlerL(args.Term) // update current term, votedFor
 
@@ -45,60 +48,25 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 	}
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		// did not vote for this term or has voted this candidate, repeated req
-		isEmpty := len(rf.log) == 0
-		if isEmpty {
+		myLastLog := rf.log.lastEntry()
+		isUptoDate := myLastLog.Term < args.LastLogTerm ||
+			myLastLog.Term == args.LastLogTerm &&
+			rf.log.lastIndex() <= args.LastLogIndex
+
+		if isUptoDate { // voting the for the candidate
+			Debug(dVote, "S%d -> S%d granted vote, granters state: T%d, LT-%d, LI-%d",
+				rf.me, args.CandidateId, rf.currentTerm, myLastLog.Term, rf.log.lastIndex())
+
 			reply.VoteGranted = true
-		} else {
-			// not empty
-			myLastLog := rf.log[len(rf.log) - 1]
-
-			if myLastLog.Term < args.LastLogTerm ||
-				myLastLog.Term == args.LastLogTerm &&
-					len(rf.log) <= (1 + args.LastLogIndex) { // 0-based log
-
-				reply.VoteGranted = true
-			}
+			rf.votedFor = args.CandidateId
+			rf.resettingElectionTimerL() // resetting the timer
+			rf.persist()
+			return
 		}
 	}
-
-	if reply.VoteGranted { // voting the for the candidate
-		rf.votedFor = args.CandidateId
-		rf.resettingElectionTimerL() // resetting the timer
-		rf.persist()
-	}
-
-
+	Debug(dVote, "S%d <- S%d vote denied", rf.me, args.CandidateId)
 }
 
-//
-// example code to send a RequestVoteHandler RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-//
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVoteHandler", args, reply)
 	return ok
@@ -124,16 +92,16 @@ func (rf *Raft) resettingElectionTimerL() {
 		ElectionTimeOutMin
 }
 
-// It will always be called holding mu lock
-func (rf *Raft) preRPCHandlerL(foundTerm int) bool {
-	if foundTerm > rf.currentTerm {
-		rf.currentTerm = foundTerm
-		rf.becomeFollowerL()
-		rf.persist()
-		return false
-	}
-	return true
-}
+//// It will always be called holding mu lock
+//func (rf *Raft) preRPCHandlerL(foundTerm int) bool {
+//	if foundTerm > rf.currentTerm {
+//		rf.currentTerm = foundTerm
+//		rf.becomeFollowerL()
+//		rf.persist()
+//		return false
+//	}
+//	return true
+//}
 // Called after holding mu lock
 
 func (rf *Raft) becomeLeaderL(term int) {
@@ -147,10 +115,11 @@ func (rf *Raft) becomeLeaderL(term int) {
 		if ind == rf.me {
 			continue
 		}
-		rf.nextIndex[ind] = len(rf.log) // FIXME log
-		rf.matchIndex[ind] = -1 		// FIXME log
+		rf.nextIndex[ind] = rf.log.lastIndex() + 1
+		rf.matchIndex[ind] = 0
 	}
 	go rf.sendHeartBeat(term)
+	go rf.appendEntriesDaemon(term)
 	go rf.updateLeaderCommitIndex(term)
 	// need some nextInd resetting for 2B, 2C
 }
@@ -199,13 +168,8 @@ func (rf *Raft) kickOffAnElection() {
 	setLeader := 0 	// for checking at most once it is set leader at this term
 
 	askedVoteTerm := rf.currentTerm // for local use
-	lastLogIndex, lastLogTerm := -1, -1 // FIXME log
-
-	if len(rf.log) > 0 {
-		lastLogIndex = len(rf.log) - 1
-		lastLogTerm = rf.log[lastLogIndex].Term
-	}
-
+	lastLogIndex := rf.log.lastIndex()
+	lastLogTerm := rf.log.lastEntry().Term  // when LogList is empty, lastTerm = 0, so always uptoDate
 
 	for ind,_ := range rf.peers {
 		if ind == rf.me {
@@ -245,7 +209,6 @@ func (rf *Raft) kickOffAnElection() {
 						panic("Leader more than once in a term")
 					}
 				}
-
 			}
 		}(ind, lastLogIndex, lastLogTerm)
 	}
