@@ -258,7 +258,7 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 			//Debug(dCommit, "S%d nothing new to apply(LA-%d >= CI-%d)",
 			//	rf.me, rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)  // nothing new, so wait 10ms and recheck
 		}
 	}
 }
