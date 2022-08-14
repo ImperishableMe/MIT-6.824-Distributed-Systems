@@ -10,12 +10,12 @@ type LogEntry struct {
 
 type Log struct {
 	LogList []LogEntry
-	Ind0    int // last position, Ind0 = 0 means no previous Log
+	Ind0    int // first position, Ind0 = 0 means no previous Log
 }
 
 func (l Log) String() string {
 	var str string
-	//str = fmt.Sprintf("Ind0-%d", l.Ind0)
+	str = fmt.Sprintf("Ind0-%d", l.Ind0)
 	for ind, val := range l.LogList {
 		str += fmt.Sprintf("([%v,%v], %v),", val.Cmd, val.Term, ind+l.Ind0)
 	}
@@ -46,9 +46,15 @@ func (l *Log) cutEnd(index int) {
 	l.LogList = l.LogList[0: index - l.Ind0]
 }
 
+//func (l *Log) cutStart(index int) {
+//	l.Ind0 += index
+//	l.LogList = l.LogList[index:]
+//}
+
+// index means upto index all logs are trimmed
 func (l *Log) cutStart(index int) {
-	l.Ind0 += index
-	l.LogList = l.LogList[index:]
+	l.LogList = l.LogList[index+1-l.Ind0:]
+	l.Ind0 = index
 }
 
 func (l *Log) slice(ind int) []LogEntry {

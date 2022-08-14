@@ -18,9 +18,6 @@ package raft
 //
 
 import (
-	"6.824/labgob"
-	"bytes"
-
 	//	"bytes"
 	"sync"
 	"sync/atomic"
@@ -52,11 +49,21 @@ type Raft struct {
 	lastHeartBeat 	time.Time
 	electionTimeOut	int
 
-	//  leader's only attributes
+	// Leader's only attributes
 	nextIndex 		[]int
 	matchIndex		[]int
 
+	// SnapShot states
+	snapshot 		[]byte
+	snapshotIndex 	int // includes upto(including) this term
+	snapshotTerm 	int	// corresponding term
+
+	// temporary snapshot state for applying
+	waitingSnapshot 		[]byte
+	waitingSnapshotIndex 	int // includes upto(including) this term
+	waitingSnapshotTerm 	int	// corresponding term
 }
+
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -72,65 +79,7 @@ func (rf *Raft) GetState() (int, bool) {
 	return term, isLeader
 }
 
-//
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-//
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.log)
-	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
-}
 
-//
-// restore previously persisted state.
-//
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	r := bytes.NewBuffer(data)
-	d := labgob.NewDecoder(r)
-	var currentTerm, votedFor int
-	var log Log
-
-	if d.Decode(&currentTerm) != nil ||
-		d.Decode(&votedFor) != nil ||
-		d.Decode(&log) != nil {
-		DPrintf("Error while loading persisted entries!")
-	} else {
-		rf.currentTerm = currentTerm
-		rf.votedFor = votedFor
-		rf.log = log
-	}
-}
-
-//
-// A service wants to switch to snapshot.  Only do so if Raft hasn't
-// have more recent info since it communicate the snapshot on applyCh.
-//
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
-	// Your code here (2D).
-
-	return true
-}
-
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the LogList through (and including)
-// that index. Raft should now trim its LogList as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
-
-}
 
 // Start
 // the service using Raft (e.g. a k/v server) wants to start
@@ -225,43 +174,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(rf.peers))
 
 	rf.resettingElectionTimerL()
-	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	go rf.electionDaemon()
-	//go rf.appendEntriesDaemon()
 	go rf.applyDaemon(applyCh)
 
 	return rf
 }
 
-func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
-
-	for !rf.killed() {
-		rf.mu.Lock()
-
-		if rf.lastApplied < rf.commitIndex {
-			rf.lastApplied++
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command:      rf.log.entry(rf.lastApplied).Cmd,
-				CommandIndex: rf.lastApplied,
-			}
-			Debug(dCommit, "S%d applied new cmd-%v, cmdInd-%d",
-				rf.me, msg.Command, msg.CommandIndex)
-
-			rf.mu.Unlock()
-			applyCh <- msg
-		} else {
-			//Debug(dCommit, "S%d nothing new to apply(LA-%d >= CI-%d)",
-			//	rf.me, rf.lastApplied, rf.commitIndex)
-			rf.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)  // nothing new, so wait 10ms and recheck
-		}
-	}
-}
 
 func (rf *Raft) updateLeaderCommitIndex(term int) {
 
@@ -271,7 +193,6 @@ func (rf *Raft) updateLeaderCommitIndex(term int) {
 			rf.mu.Unlock()
 			break
 		}
-
 		for i := rf.commitIndex + 1; i <= rf.log.lastIndex(); i++ {
 			if rf.log.entry(i).Term != rf.currentTerm {
 				continue
@@ -293,6 +214,7 @@ func (rf *Raft) updateLeaderCommitIndex(term int) {
 			}
 		}
 		rf.mu.Unlock()
+
 		time.Sleep(10* time.Millisecond)
 	}
 }

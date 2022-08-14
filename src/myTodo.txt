@@ -1,0 +1,11 @@
+For better:
+-> sending RPC to all peers with same arguments
+-> each rpc should be sent(and handled) in
+    its own go routine
+-> applyCh should use conditional variable
+
+
+
+-> updateCommitIndex should have a term argument
+-> implement string for structures
+-> appendentries should be sent in 2 cases: heartbeats, start()

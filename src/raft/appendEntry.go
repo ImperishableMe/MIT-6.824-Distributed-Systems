@@ -105,7 +105,9 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 			break
 		} else if rf.log.entry(curLogIndex).Term != entry.Term {
 			Debug(dLog2, "S%d LogList cut from pos %d", rf.me, curLogIndex)
-			rf.log.cutEnd(curLogIndex)
+
+			rf.log.cutEnd(curLogIndex) // FIXME check cutEnd
+
 			Debug(dLog2, "S%d adding %d entries at LogList's pos %d",
 				rf.me, len(args.Entries[ind:]), rf.log.lastIndex()+1)
 
@@ -184,7 +186,6 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 		}
 		var entries []LogEntry
 		prevTerm , prevLogIndex := 0, 0
-
 		nxtInd := rf.nextIndex[server]
 
 		Debug(dLeader, "S%d -> S%d sending HB at T%d, nxtInd-%d",
