@@ -22,14 +22,26 @@ type ExampleReply struct {
 	Y int
 }
 
+type ArgsFromWorker struct {
+	TaskType string
+	TaskNum int
+}
+
+type ReplyFromCoordinator struct {
+	TaskType string
+	NumReduce int
+	FileName string
+	TaskNum int
+}
+
 // Add your RPC definitions here.
 
 
 // Cook up a unique-ish UNIX-domain socket name
-// in /var/tmp, for the coordinator.
+// in /var/tmp, for the master.
 // Can't use the current directory since
 // Athena AFS doesn't support UNIX-domain sockets.
-func coordinatorSock() string {
+func masterSock() string {
 	s := "/var/tmp/824-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
