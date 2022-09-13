@@ -10,15 +10,16 @@ type LogEntry struct {
 
 type Log struct {
 	LogList []LogEntry
-	Ind0    int // first position, Ind0 = 0 means no previous Log
+	Ind0    int         // position of first entry of LogList in actual log
 }
 
 func (l Log) String() string {
 	var str string
-	str = fmt.Sprintf("Ind0-%d", l.Ind0)
+	str = fmt.Sprintf("(st-en):(%d-%d), len-%d ||||| [", l.Ind0, l.lastIndex(), l.lastIndex() - l.Ind0 + 1)
 	for ind, val := range l.LogList {
-		str += fmt.Sprintf("([%v,%v], %v),", val.Cmd, val.Term, ind+l.Ind0)
+		str += fmt.Sprintf("(%d, [%v,%v]),", ind+l.Ind0, val.Cmd, val.Term)
 	}
+	str += "]"
 	return str
 }
 
@@ -42,8 +43,13 @@ func (l *Log) start() int {
 	return l.Ind0
 }
 
+// cutLog after index (keep index, drop everything after that)
 func (l *Log) cutEnd(index int) {
-	l.LogList = l.LogList[0: index - l.Ind0]
+	if index < l.Ind0 {
+		fmt.Printf("ind:%d < log_st:%d\n", index, l.Ind0)
+		panic("Big Log")
+	}
+	l.LogList = l.LogList[0: index - l.Ind0 + 1]
 }
 
 //func (l *Log) cutStart(index int) {
@@ -51,10 +57,14 @@ func (l *Log) cutEnd(index int) {
 //	l.LogList = l.LogList[index:]
 //}
 
-// index means upto index all logs are trimmed
+// logs before index are trimmed
 func (l *Log) cutStart(index int) {
-	l.LogList = l.LogList[index+1-l.Ind0:]
+
+	l.LogList = l.LogList[index-l.Ind0:]
 	l.Ind0 = index
+	if len(l.LogList) != l.lastIndex() - l.Ind0 + 1 {
+		panic("Log cut is not consistent")
+	}
 }
 
 func (l *Log) slice(ind int) []LogEntry {

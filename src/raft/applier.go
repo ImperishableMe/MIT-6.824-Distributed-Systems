@@ -38,8 +38,17 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 
 	for !rf.killed() {
 		rf.mu.Lock()
-
-		if rf.lastApplied < rf.commitIndex {
+		if rf.waitingSnapshot != nil {
+			msg := ApplyMsg{
+				SnapshotValid: true,
+				Snapshot: rf.waitingSnapshot,
+				SnapshotTerm: rf.waitingSnapshotTerm,
+				SnapshotIndex: rf.waitingSnapshotIndex,
+			}
+			rf.waitingSnapshot = nil
+			rf.mu.Unlock()
+			applyCh <- msg
+		} else if rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			msg := ApplyMsg{
 				CommandValid: true,
@@ -52,8 +61,6 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 			rf.mu.Unlock()
 			applyCh <- msg
 		} else {
-			//Debug(dCommit, "S%d nothing new to apply(LA-%d >= CI-%d)",
-			//	rf.me, rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
 			time.Sleep(10 * time.Millisecond)  // nothing new, so wait 10ms and recheck
 		}

@@ -22,10 +22,10 @@ func (rf *Raft) persist() {
 
 func (rf *Raft) persistWithSnapshotL() {
 	Debug(dPersist, "S%d persisting raft State and Snapshot", rf.me)
-	Debug(dPersist, "S%d reading state." +
+	Debug(dPersist, "S%d persisting state." +
 		"curT:%d,votT:%d,log:(ind0,lastInd):(%d,%d)",
 		rf.me, rf.currentTerm, rf.votedFor, rf.log.Ind0, rf.log.lastIndex())
-	Debug(dPersist, "S%d reading SnapShot." +
+	Debug(dPersist, "S%d persisting SnapShot." +
 		"shotLen:%d,sInd:%d,sTerm:%d",
 		rf.me, len(rf.snapshot), rf.snapshotIndex, rf.snapshotTerm)
 

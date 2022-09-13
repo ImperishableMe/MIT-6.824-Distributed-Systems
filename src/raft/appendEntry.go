@@ -33,28 +33,30 @@ func (rf *Raft) handleAppendEntriesConflictL(args *AppendEntriesArgs, reply *App
 
 	Debug(dLog, "S%d LogList %v", rf.me, rf.log)
 
-	if leaderPrevIndex > 0 {
-		if leaderPrevIndex > rf.log.lastIndex(){
-			// does not contain entry, set conflict to this follower's LogList end
-			reply.ConflictIndex = rf.log.lastIndex() + 1
-			reply.Success = false
-			return true
-		}
-		if entry := rf.log.entry(leaderPrevIndex); entry.Term != leaderPrevTerm {
-			// entry's term does not match, find the first index of this conflicting
-			// term's LogList entry in this follower's LogList
-			conflictingTerm := entry.Term
-			pos := leaderPrevIndex
-			for pos > 0 && rf.log.entry(pos).Term == conflictingTerm {
-				pos--
-			}
-			reply.ConflictIndex = pos + 1
-			reply.Success = false
+	if leaderPrevIndex <= rf.log.start() {
+		return false
+	}
 
-			Debug(dInfo, "S%d conflictHandler: confT-%d confI-%d",
-				rf.me, conflictingTerm, reply.ConflictIndex)
-			return true
+	if leaderPrevIndex > rf.log.lastIndex(){
+		// does not contain entry, set conflict to this follower's LogList end
+		reply.ConflictIndex = rf.log.lastIndex() + 1
+		reply.Success = false
+		return true
+	}
+	if entry := rf.log.entry(leaderPrevIndex); entry.Term != leaderPrevTerm {
+		// entry's term does not match, find the first index of this conflicting
+		// term's LogList entry in this follower's LogList
+		conflictingTerm := entry.Term
+		pos := leaderPrevIndex
+		for pos > rf.log.start() && rf.log.entry(pos).Term == conflictingTerm {
+			pos--
 		}
+		reply.ConflictIndex = pos + 1
+		reply.Success = false
+
+		Debug(dInfo, "S%d conflictHandler: confT-%d confI-%d",
+			rf.me, conflictingTerm, reply.ConflictIndex)
+		return true
 	}
 	return false
 }
@@ -88,14 +90,16 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 		return
 	}
 
-	// RPC is okay, not update rf.log
+	// RPC is okay, now update rf.log
 
 	leaderPrevIndex := args.PrevLogIndex
 	lastNewInd := leaderPrevIndex
 
 	for ind, entry := range args.Entries {
 		curLogIndex := leaderPrevIndex + 1 + ind
-
+		if curLogIndex < rf.log.start() {
+			continue
+		}
 		if curLogIndex > rf.log.lastIndex() {
 			Debug(dLog2, "S%d adding %d entries at LogList's end(pos %d)",
 				rf.me, len(args.Entries[ind:]), rf.log.lastIndex()+1)
@@ -106,7 +110,7 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 		} else if rf.log.entry(curLogIndex).Term != entry.Term {
 			Debug(dLog2, "S%d LogList cut from pos %d", rf.me, curLogIndex)
 
-			rf.log.cutEnd(curLogIndex) // FIXME check cutEnd
+			rf.log.cutEnd(curLogIndex-1) // FIXME check cutEnd
 
 			Debug(dLog2, "S%d adding %d entries at LogList's pos %d",
 				rf.me, len(args.Entries[ind:]), rf.log.lastIndex()+1)
@@ -126,7 +130,7 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 	}
 	Debug(dCommit, "S%d commitIndex %d", rf.me, rf.commitIndex)
 
-	rf.persist()
+	rf.persistWithSnapshotL()
 }
 
 func Min(a, b int) int {
@@ -163,7 +167,7 @@ func (rf *Raft) appendEntriesDaemon(term int) {
 		rf.mu.Unlock()
 	}
 }
-
+// TODO: fix sendHeartBeat to not send unncessary RPC
 func (rf *Raft) sendHeartBeat(term int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -184,22 +188,28 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 			rf.mu.Unlock()
 			break
 		}
-		var entries []LogEntry
-		prevTerm , prevLogIndex := 0, 0
 		nxtInd := rf.nextIndex[server]
 
-		Debug(dLeader, "S%d -> S%d sending HB at T%d, nxtInd-%d",
+		if nxtInd <= rf.log.start() {
+			rf.installSnapshotL(server, term)
+			return
+		}
+
+		var entries []LogEntry
+		prevTerm , prevLogIndex := 0, 0
+
+		Debug(dLeader, "S%d -> S%d sending HB at T%d, nxtInd:%d",
 			rf.me, server, term, nxtInd)
 		Debug(dLog, "S%d LogList-%v", rf.log.LogList)
 
-		if nxtInd == 0 {  	// nxtInd should not be 0
-			Debug(dError, "S%d for S%d nxtInd is 0!!", rf.me, server)
-			panic("nxtInd is 0")
+		if nxtInd <= 0 {  	// nxtInd should not be 0
+			Debug(dError, "S%d for S%d nxtInd is <= 0!!", rf.me, server)
+			panic("nxtInd")
 		}
 
 		prevTerm = rf.log.entry(nxtInd - 1).Term
 		prevLogIndex = nxtInd - 1
-		entries = make([]LogEntry,len(rf.log.slice(nxtInd))) // empty slice or beyond slice returns 0
+		entries = make([]LogEntry, len(rf.log.slice(nxtInd))) // empty slice or beyond slice returns 0
 		copy(entries, rf.log.slice(nxtInd))
 
 		args := AppendEntriesArgs{
@@ -210,22 +220,17 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 			Entries:      entries,
 			LeaderCommit: rf.commitIndex,
 		}
-
 		Debug(dInfo, "S%d -> S%d sending AERpc %v", rf.me, server, args)
 		Debug(dLog, "S%d -> S%d AERpc log- %v", rf.log.LogList)
 
 		reply := AppendEntriesReply{}
-
 		rf.mu.Unlock()
-
 		ok := rf.sendAppendEntries(server, &args, &reply)
 		if !ok {
 			continue // appendEntries failed, try again!
 		}
 		rf.mu.Lock()
-
 		rf.newTermCheckL(reply.Term)
-
 		if term != rf.currentTerm || rf.state != Leader {
 			Debug(dInfo, "S%d <- S%d got old AERpc reply.Ignoring!", rf.me, server)
 			rf.mu.Unlock()
@@ -247,6 +252,7 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 			Debug(dInfo, "S%d <- S%d got unsuccessful AERpc reply:" +
 				"conflictInd-%d, actNxt-%d, actMat-%d",
 				rf.me, server, reply.ConflictIndex, rf.nextIndex[server], rf.matchIndex[server])
+
 			rf.nextIndex[server] = reply.ConflictIndex
 			rf.mu.Unlock()
 		}

@@ -60,7 +60,7 @@ func (rf *Raft) RequestVoteHandler(args *RequestVoteArgs, reply *RequestVoteRepl
 			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
 			rf.resettingElectionTimerL() // resetting the timer
-			rf.persist()
+			rf.persistWithSnapshotL()       					// TODO: fix persisting with snapshot
 			return
 		}
 	}
@@ -80,7 +80,7 @@ func (rf *Raft) newTermCheckL(foundTerm int) {
 
 		rf.currentTerm = foundTerm
 		rf.becomeFollowerL()
-		rf.persist()
+		rf.persistWithSnapshotL()
 	}
 }
 
@@ -91,18 +91,6 @@ func (rf *Raft) resettingElectionTimerL() {
 	rf.electionTimeOut = rand.Intn(ElectionTimeOutMax - ElectionTimeOutMin) +
 		ElectionTimeOutMin
 }
-
-//// It will always be called holding mu lock
-//func (rf *Raft) preRPCHandlerL(foundTerm int) bool {
-//	if foundTerm > rf.currentTerm {
-//		rf.currentTerm = foundTerm
-//		rf.becomeFollowerL()
-//		rf.persist()
-//		return false
-//	}
-//	return true
-//}
-// Called after holding mu lock
 
 func (rf *Raft) becomeLeaderL(term int) {
 
@@ -124,7 +112,6 @@ func (rf *Raft) becomeLeaderL(term int) {
 	// need some nextInd resetting for 2B, 2C
 }
 
-// Also called holding the mu lock
 func (rf *Raft) becomeFollowerL(){
 	Debug(dInfo, "S%d -> follower at T%d", rf.me, rf.currentTerm)
 	rf.votedFor = -1
@@ -133,7 +120,6 @@ func (rf *Raft) becomeFollowerL(){
 
 
 func (rf *Raft) electionDaemon() {
-
 	for !rf.killed() {
 		time.Sleep(10 * time.Millisecond)
 
@@ -156,7 +142,7 @@ func (rf *Raft) prepareForAnElection() {
 	Debug(dVote, "S%d ELT elapsed. Candidate at T%d",
 		rf.me, rf.currentTerm)
 	rf.resettingElectionTimerL()
-	rf.persist()
+	rf.persistWithSnapshotL()
 }
 
 func (rf *Raft) kickOffAnElection() {
@@ -169,12 +155,11 @@ func (rf *Raft) kickOffAnElection() {
 
 	askedVoteTerm := rf.currentTerm // for local use
 	lastLogIndex := rf.log.lastIndex()
-	lastLogTerm := rf.log.lastEntry().Term  // when LogList is empty, lastTerm = 0, so always uptoDate
+	lastLogTerm := rf.log.lastEntry().Term
 
 	for ind,_ := range rf.peers {
-		if ind == rf.me {
-			continue
-		}
+		if ind == rf.me {continue}
+
 		go func(curInd, lastLogIndex, lastLogTerm int){
 			args := RequestVoteArgs{
 				Term:         askedVoteTerm,

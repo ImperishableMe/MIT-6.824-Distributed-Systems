@@ -180,6 +180,7 @@ const SnapShotInterval = 10
 // periodically snapshot raft state
 func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	lastApplied := 0
+
 	for m := range applyCh {
 		if m.SnapshotValid {
 			//DPrintf("Installsnapshot %v %v\n", m.SnapshotIndex, lastApplied)
@@ -525,7 +526,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
-			Debug(dTest, "Waiting for S%d to commit %v", index, cmd)
+			Debug(dTest, "Waiting for cmd %v to commit at index %d", cmd, index)
 
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {

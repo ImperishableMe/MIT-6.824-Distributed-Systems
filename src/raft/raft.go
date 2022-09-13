@@ -40,7 +40,7 @@ type Raft struct {
 	votedFor		int       				// which peer got vote from me in currentTerm (votedFor can be me)
 	log 			Log 					// first index is 1
 
-	// non volatile
+	// volatile
 	commitIndex 	int 					// index of highest log entry known to be committed (
 											// initialized to 0, increases monotonically)
 	lastApplied 	int 					// index of highest log entry applied to state machine ( initialized to 0)
@@ -114,11 +114,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	})
 	term = rf.currentTerm
 
-	rf.persist()
-
 	Debug(dClient, "S%d New Command T:%d cmd: %v," +
 		"trying ind:%d",
 		rf.me, rf.currentTerm, command, index)
+
+	rf.persistWithSnapshotL()
+	go rf.sendHeartBeat(term)
 
 	return index, term, isLeader
 }
@@ -163,9 +164,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.state = Follower
 	rf.votedFor = -1
-	rf.commitIndex = 0
-	rf.lastApplied = 0
 	rf.log = mkLogEmpty()
+
+	rf.readPersist(persister.ReadRaftState())
+
+	rf.commitIndex = rf.snapshotIndex                  					// TODO: initialize properly after snapshotting
+	rf.lastApplied = rf.snapshotIndex									// TODO: initialize properly after snapshotting
 
 	Debug(dInfo, "S%d is live now at T:%d, VotF:%d",
 		rf.me, rf.currentTerm, rf.votedFor)
@@ -176,7 +180,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.resettingElectionTimerL()
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
 
 	go rf.electionDaemon()
 	go rf.applyDaemon(applyCh)
@@ -214,7 +217,6 @@ func (rf *Raft) updateLeaderCommitIndex(term int) {
 			}
 		}
 		rf.mu.Unlock()
-
-		time.Sleep(10* time.Millisecond)
+		time.Sleep(10*time.Millisecond)
 	}
 }
