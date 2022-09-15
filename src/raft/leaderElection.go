@@ -106,7 +106,7 @@ func (rf *Raft) becomeLeaderL(term int) {
 		rf.nextIndex[ind] = rf.log.lastIndex() + 1
 		rf.matchIndex[ind] = 0
 	}
-	go rf.sendHeartBeat(term)
+	go rf.sendHeartBeat(true)
 	go rf.appendEntriesDaemon(term)
 	go rf.updateLeaderCommitIndex(term)
 	// need some nextInd resetting for 2B, 2C

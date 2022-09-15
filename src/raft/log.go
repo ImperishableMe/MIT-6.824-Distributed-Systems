@@ -16,8 +16,20 @@ type Log struct {
 func (l Log) String() string {
 	var str string
 	str = fmt.Sprintf("(st-en):(%d-%d), len-%d ||||| [", l.Ind0, l.lastIndex(), l.lastIndex() - l.Ind0 + 1)
-	for ind, val := range l.LogList {
-		str += fmt.Sprintf("(%d, [%v,%v]),", ind+l.Ind0, val.Cmd, val.Term)
+
+	if len(l.LogList) <= 10 {
+		for ind, val := range l.LogList {
+			str += fmt.Sprintf("(%d, [%v,%v]),", ind+l.Ind0, val.Cmd, val.Term)
+		}
+	} else {
+		for ind, val := range l.LogList[:3] {
+			str += fmt.Sprintf("(%d, [%v,%v]),", ind+l.Ind0, val.Cmd, val.Term)
+		}
+		str += ".........."
+		start := l.lastIndex() - l.Ind0 - 2
+		for ind, val := range l.LogList[start:] {
+			str += fmt.Sprintf("(%d, [%v,%v]),", ind+l.Ind0, val.Cmd, val.Term)
+		}
 	}
 	str += "]"
 	return str
@@ -44,6 +56,7 @@ func (l *Log) start() int {
 }
 
 // cutLog after index (keep index, drop everything after that)
+// TODO: make sure memory is freed properly
 func (l *Log) cutEnd(index int) {
 	if index < l.Ind0 {
 		fmt.Printf("ind:%d < log_st:%d\n", index, l.Ind0)
@@ -58,6 +71,7 @@ func (l *Log) cutEnd(index int) {
 //}
 
 // logs before index are trimmed
+// TODO: make sure memory is freed properly
 func (l *Log) cutStart(index int) {
 
 	l.LogList = l.LogList[index-l.Ind0:]

@@ -163,12 +163,13 @@ func (rf *Raft) appendEntriesDaemon(term int) {
 			rf.mu.Unlock()
 			break
 		}
-		go rf.sendHeartBeat(term)
+		Debug(dInfo, "S%d HB timer at T:%d", rf.me, rf.currentTerm)
+		go rf.sendHeartBeat(true)
 		rf.mu.Unlock()
 	}
 }
-// TODO: fix sendHeartBeat to not send unncessary RPC
-func (rf *Raft) sendHeartBeat(term int) {
+// TODO: fix sendHeartBeat to not send unnecessary RPC
+func (rf *Raft) sendHeartBeat(isHeartBeat bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -176,7 +177,9 @@ func (rf *Raft) sendHeartBeat(term int) {
 		if ind == rf.me {
 			continue
 		}
-		go rf.sendHeartBeatToOne(ind, rf.currentTerm)
+		if isHeartBeat || rf.nextIndex[ind] <= rf.log.lastIndex() {
+			go rf.sendHeartBeatToOne(ind, rf.currentTerm)
+		}
 	}
 }
 
@@ -200,7 +203,7 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 
 		Debug(dLeader, "S%d -> S%d sending HB at T%d, nxtInd:%d",
 			rf.me, server, term, nxtInd)
-		Debug(dLog, "S%d LogList-%v", rf.log.LogList)
+		Debug(dLog, "S%d Leader Log-%v",rf.me, rf.log)
 
 		if nxtInd <= 0 {  	// nxtInd should not be 0
 			Debug(dError, "S%d for S%d nxtInd is <= 0!!", rf.me, server)
@@ -221,7 +224,6 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 			LeaderCommit: rf.commitIndex,
 		}
 		Debug(dInfo, "S%d -> S%d sending AERpc %v", rf.me, server, args)
-		Debug(dLog, "S%d -> S%d AERpc log- %v", rf.log.LogList)
 
 		reply := AppendEntriesReply{}
 		rf.mu.Unlock()

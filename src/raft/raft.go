@@ -119,7 +119,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.me, rf.currentTerm, command, index)
 
 	rf.persistWithSnapshotL()
-	go rf.sendHeartBeat(term)
+	go rf.sendHeartBeat(false)
 
 	return index, term, isLeader
 }
@@ -180,6 +180,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.resettingElectionTimerL()
 
 	// initialize from state persisted before a crash
+
+	if rf.waitingSnapshot != nil {
+		panic("Rogue WaitingSnapshot!")
+	}
 
 	go rf.electionDaemon()
 	go rf.applyDaemon(applyCh)

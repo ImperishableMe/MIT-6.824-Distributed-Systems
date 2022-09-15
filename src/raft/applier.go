@@ -63,6 +63,7 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 		} else {
 			rf.mu.Unlock()
 			time.Sleep(10 * time.Millisecond)  // nothing new, so wait 10ms and recheck
+			Debug(dWarn, "S%d Applier: lastApplied:%d, CommitInd:%d", rf.me, rf.lastApplied, rf.commitIndex)
 		}
 	}
 }
