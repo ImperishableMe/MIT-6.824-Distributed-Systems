@@ -50,9 +50,11 @@ func (rf *Raft) mySnapshotEncoder() []byte{
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 
-	e.Encode(rf.snapshot)
-	e.Encode(rf.snapshotIndex)
-	e.Encode(rf.snapshotTerm)
+	if rf.snapshot != nil {
+		e.Encode(rf.snapshot)
+		e.Encode(rf.snapshotIndex)
+		e.Encode(rf.snapshotTerm)
+	}
 
 	data := w.Bytes()
 	return data

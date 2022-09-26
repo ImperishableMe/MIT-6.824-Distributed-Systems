@@ -6,7 +6,10 @@ import "math/big"
 
 
 type Clerk struct {
-	servers []*labrpc.ClientEnd
+	servers     []*labrpc.ClientEnd
+	leaderIndex int
+	ClientId    int64
+	SeqNum      int64
 	// You will have to modify this struct.
 }
 
@@ -20,6 +23,9 @@ func nrand() int64 {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.ClientId = nrand()
+	ck.SeqNum = 0        // starting from 0 won't be a problem because each instance of client gets a unique (hopefully) ID
+	ck.leaderIndex = 0
 	// You'll have to add code here.
 	return ck
 }
@@ -37,7 +43,15 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
+	ck.SeqNum++
+	for i := ck.leaderIndex; i < len(ck.servers); i = (i+1) % len(ck.servers) {
+		args, reply := GetArgs{key, ck.ClientId, ck.SeqNum}, GetReply{}
+		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+		if ok && reply.Err == "" {
+			ck.leaderIndex = i
+			return reply.Value
+		}
+	}
 	// You will have to modify this function.
 	return ""
 }
@@ -53,6 +67,21 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
+	ck.SeqNum++
+	for i := ck.leaderIndex; i < len(ck.servers); i = (i+1) % len(ck.servers) {
+		args, reply := PutAppendArgs{
+			key,
+			value,
+			op,
+			ck.ClientId,
+			ck.SeqNum,
+		}, PutAppendReply{}
+		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+		if ok && reply.Err == "" {
+			ck.leaderIndex = i
+			return
+		}
+	}
 	// You will have to modify this function.
 }
 

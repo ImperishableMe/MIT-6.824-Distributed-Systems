@@ -36,6 +36,8 @@ type ApplyMsg struct {
 
 func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 
+	defer close(applyCh)
+
 	for !rf.killed() {
 		rf.mu.Lock()
 		if rf.waitingSnapshot != nil {
@@ -61,9 +63,9 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 			rf.mu.Unlock()
 			applyCh <- msg
 		} else {
+			Debug(dWarn, "S%d Applier: lastApplied:%d, CommitInd:%d", rf.me, rf.lastApplied, rf.commitIndex)
 			rf.mu.Unlock()
 			time.Sleep(10 * time.Millisecond)  // nothing new, so wait 10ms and recheck
-			Debug(dWarn, "S%d Applier: lastApplied:%d, CommitInd:%d", rf.me, rf.lastApplied, rf.commitIndex)
 		}
 	}
 }
