@@ -13,7 +13,7 @@ type Log struct {
 	Ind0    int         // position of first entry of LogList in actual log
 }
 
-func (l Log) String() string {
+func (l *Log) String() string {
 	var str string
 	str = fmt.Sprintf("(st-en):(%d-%d), len-%d ||||| [", l.Ind0, l.lastIndex(), l.lastIndex() - l.Ind0 + 1)
 

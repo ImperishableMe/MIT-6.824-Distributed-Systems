@@ -4,20 +4,12 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-	"log"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
 
 type Op struct {
 	// Your definitions here.
@@ -30,6 +22,11 @@ type Op struct {
 	SeqNum   int64
 }
 
+func (op Op) String() string {
+	return fmt.Sprintf("(Cid:%v,seqN:%v,cmdType:%v,key:%v,val:%v)",
+		op.ClientID, op.SeqNum, op.CmdType, op.Key, op.Value)
+}
+
 type KVServer struct {
 	mu      sync.Mutex
 	me      int
@@ -40,57 +37,64 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	keyValue        map[string]string // holds the actual key->value
-	requestResponse map[string]string // maps RPC request id to Response
+	isLeader  					 bool
+	keyValue      				 map[string]string // holds the actual key->value
+	clientLastOpId				 map[int64]int64    // maps RPC request id to Response
+	clientLastOpResponse 		 map[int64]string    // maps RPC request id to Response
+}
+
+func (kv *KVServer) handler(op Op, args interface{}, reply Reply) {
+	Debug(dServer, "S%d <- Cl(%d) Op received %v", kv.me, op.ClientID, op)
+	index, term, isLeader := kv.rf.Start(op)
+
+	Debug(dServer, "S%d Op(%v) status: (ind,term,isL):(%v,%v,%v) ", kv.me, op, index, term, isLeader)
+	if kv.shouldDrop(isLeader) {
+		reply.setErr("NotLeader")
+		Debug(dDrop, "S%d <- Cl(%d) Op(%v) dropped", kv.me, op.ClientID, op)
+		return
+	}
+	//id := getHashcode(args.ClientId, args.SeqNum)
+	clientID, seqNum := op.ClientID, op.SeqNum
+
+	for !kv.killed() {
+		kv.mu.Lock()
+		lastOpId, ok := kv.clientLastOpId[clientID]
+		Debug(dTrace, "S%d ReqID (%d,%d) state-(LastOpId, ok):(%v,%v)", kv.me, clientID, seqNum, lastOpId, ok)
+
+		if !ok || lastOpId < seqNum {
+			kv.mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+			Debug(dTimer, "S%d timer expired for ReqId (%d,%d)", kv.me, clientID, seqNum)
+		} else if lastOpId > seqNum {
+			reply.setErr( "NoLeader")
+			Debug(dDrop, "S%d <- Cl(%d) Op(%d) dropped,  %v", kv.me, clientID, seqNum, args)
+			kv.mu.Unlock()
+			return
+		} else {
+			reply.setValue(kv.clientLastOpResponse[clientID])
+			Debug(dServer, "S%d ReqID (%d,%d) Successfully done. Reply: %v", kv.me, clientID, seqNum, reply)
+			kv.mu.Unlock()
+			return
+		}
+	}
+	return
+}
+
+func (kv *KVServer) shouldDrop(isLeader bool) bool {
+	return !isLeader
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	kv.mu.Lock()
-	_, _, isLeader := kv.rf.Start(Op{CmdType: "Get", SeqNum: args.SeqNum, ClientID: args.ClientId, Key: args.Key})
-	kv.mu.Unlock()
-	if !isLeader {
-		reply.Err = "NotLeader"
-		return
-	}
-	id := getHashcode(args.ClientId, args.SeqNum)
+	op := Op{CmdType: "Get", SeqNum: args.SeqNum, ClientID: args.ClientId, Key: args.Key}
+	kv.handler(op, args, reply)
 
-	for !kv.killed() {
-		kv.mu.Lock()
-		response, ok := kv.requestResponse[id]
-		if !ok {
-			kv.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)
-		} else {
-			reply.Value = response
-			kv.mu.Unlock()
-			return
-		}
-	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	kv.mu.Lock()
-	_, _, isLeader := kv.rf.Start(Op{CmdType: args.Op, SeqNum: args.SeqNum, ClientID: args.ClientId, Key: args.Key, Value: args.Value})
-	kv.mu.Unlock()
-	if !isLeader {
-		reply.Err = "NotLeader"
-		return
-	}
-	id := getHashcode(args.ClientId, args.SeqNum)
-
-	for !kv.killed() {
-		kv.mu.Lock()
-		_, ok := kv.requestResponse[id]
-		if !ok {
-			kv.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)
-		} else {
-			kv.mu.Unlock()
-			return
-		}
-	}
+	op := Op{CmdType: args.Op, SeqNum: args.SeqNum, ClientID: args.ClientId, Key: args.Key, Value: args.Value}
+	kv.handler(op, args, reply)
 }
 
 // Kill
@@ -139,12 +143,14 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	kv.keyValue = make(map[string]string)
-	kv.requestResponse = make(map[string]string)
+	kv.clientLastOpId = make(map[int64]int64)
+	kv.clientLastOpResponse = make(map[int64]string)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.isLeader = false
 	go kv.applier()
 	return kv
 }
@@ -161,15 +167,24 @@ func (kv *KVServer) applier() {
 	}
 }
 
+func (kv *KVServer) shouldExecuteL (clientId, seqNum int64) bool {
+	lastId, ok := kv.clientLastOpId[clientId]
+	return !ok || lastId < seqNum
+}
+
 func (kv *KVServer) executeL(cmd *raft.ApplyMsg) {
 	op, ok := cmd.Command.(Op)
 	if !ok {
 		panic("Command Type Conversion Problem!")
 	}
-
+	Debug(dServer, "S%d trying to apply Op %v", kv.me, op)
 	key, value := op.Key, op.Value
-	id := getHashcode(op.ClientID, op.SeqNum)
-
+	//id := getHashcode(op.ClientID, op.SeqNum)
+	if !kv.shouldExecuteL(op.ClientID, op.SeqNum) {
+		Debug(dDrop, "S%d refused to reapply Op %v", kv.me, op)
+		return
+	}
+	Debug(dServer, "S%d executes Op %v", kv.me, op)
 	switch op.CmdType {
 	case "Get":
 	case "Put":
@@ -177,5 +192,9 @@ func (kv *KVServer) executeL(cmd *raft.ApplyMsg) {
 	case "Append":
 		kv.keyValue[key] += value
 	}
-	kv.requestResponse[id] = kv.keyValue[key]
+	kv.clientLastOpId[op.ClientID] = op.SeqNum
+	kv.clientLastOpResponse[op.ClientID] = kv.keyValue[key]
+
+	Debug(dServer, "S%d values of states (clntLast, lastResponse): (%v,%v)",
+		kv.me, kv.clientLastOpId[op.ClientID], kv.clientLastOpResponse[op.ClientID])
 }

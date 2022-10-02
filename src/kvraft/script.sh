@@ -1,4 +1,4 @@
-tasks="TestBasic3A"
+tasks="TestManyPartitionsOneClient3A"
 #
 #test2A="TestInitialElection2A TestReElection2A TestManyElections2A"
 #test2B="TestRejoin2B TestBackup2B"

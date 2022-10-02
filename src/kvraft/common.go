@@ -26,6 +26,14 @@ type PutAppendReply struct {
 	Err Err
 }
 
+func (par *PutAppendReply) setErr(err Err) {
+	par.Err = err
+}
+
+func (par *PutAppendReply) setValue(value string) {
+	_ = value
+}
+
 type GetArgs struct {
 	Key 		string
 	ClientId 	int64
@@ -39,6 +47,18 @@ type GetReply struct {
 	Value string
 }
 
+func (par *GetReply) setErr(err Err) {
+	par.Err = err
+}
+
+func (par *GetReply) setValue(value string) {
+	par.Value = value
+}
+
+type Reply interface {
+	setValue(value string)
+	setErr(err Err)
+}
 
 func getHashcode (clientId, seqNum int64) string {
 	return fmt.Sprintf("%v,%v", clientId, seqNum)

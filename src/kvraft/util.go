@@ -1,4 +1,4 @@
-package raft
+package kvraft
 
 import (
 	"fmt"
@@ -13,7 +13,6 @@ import (
 type logTopic string
 const (
 	dClient  logTopic = "CLNT"
-	dCommit  logTopic = "CMIT"
 	dDrop    logTopic = "DROP"
 	dError   logTopic = "ERRO"
 	dInfo    logTopic = "INFO"
@@ -30,16 +29,6 @@ const (
 	dServer  logTopic = "SERV"
 )
 
-
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	// Debugging
-	const Debug = false
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
 
 // Retrieve the verbosity level from an environment variable
 func getVerbosity() int {

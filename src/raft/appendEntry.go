@@ -168,7 +168,7 @@ func (rf *Raft) appendEntriesDaemon(term int) {
 		rf.mu.Unlock()
 	}
 }
-// TODO: fix sendHeartBeat to not send unnecessary RPC
+
 func (rf *Raft) sendHeartBeat(isHeartBeat bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
