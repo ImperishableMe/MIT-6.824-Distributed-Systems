@@ -6,14 +6,13 @@ import (
 )
 
 type AppendEntriesArgs struct {
-	Term			int 		//  leader's term
-	LeaderId 		int 		//	for follower's to redirect client
-	PrevLogIndex	int
-	PrevLogTerm 	int
-	Entries			[]LogEntry
-	LeaderCommit 	int
+	Term         int //  leader's term
+	LeaderId     int //	for follower's to redirect client
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []LogEntry
+	LeaderCommit int
 }
-
 
 func (a AppendEntriesArgs) String() string {
 	return fmt.Sprintf("T-%v,PLI-%d,PLT-%d, LC-%d",
@@ -21,9 +20,9 @@ func (a AppendEntriesArgs) String() string {
 }
 
 type AppendEntriesReply struct {
-	Term 			int 		// currentTerm, for leader to update itself
-	Success			bool 		// true, if follower contained entry matching
-	ConflictIndex 	int 		// gives a better nextMatch approximation
+	Term          int  // currentTerm, for leader to update itself
+	Success       bool // true, if follower contained entry matching
+	ConflictIndex int  // gives a better nextMatch approximation
 }
 
 // Paper check - 2 for fail otherwise continue
@@ -31,13 +30,13 @@ func (rf *Raft) handleAppendEntriesConflictL(args *AppendEntriesArgs, reply *App
 	leaderPrevIndex := args.PrevLogIndex
 	leaderPrevTerm := args.PrevLogTerm
 
-	Debug(dLog, "S%d LogList %v", rf.me, rf.log)
+	//Debug(dLog, "S%d LogList %v", rf.me, rf.log)
 
 	if leaderPrevIndex <= rf.log.start() {
 		return false
 	}
 
-	if leaderPrevIndex > rf.log.lastIndex(){
+	if leaderPrevIndex > rf.log.lastIndex() {
 		// does not contain entry, set conflict to this follower's LogList end
 		reply.ConflictIndex = rf.log.lastIndex() + 1
 		reply.Success = false
@@ -69,7 +68,7 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 	Debug(dInfo, "S%d <- S%d ApReq T-%d PLI-%d PLT-%d LC-%d",
 		rf.me, args.LeaderId, args.Term, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit)
 
-	Debug(dLog, "S%d <- S%d ApReq Entries: %v", rf.me, args.LeaderId, args.Entries)
+	//Debug(dLog, "S%d <- S%d ApReq Entries: %v", rf.me, args.LeaderId, args.Entries)
 
 	rf.newTermCheckL(args.Term)
 
@@ -86,7 +85,7 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 
 	done := rf.handleAppendEntriesConflictL(args, reply)
 
-	if done {      // had a conflict, handled and now return
+	if done { // had a conflict, handled and now return
 		return
 	}
 
@@ -110,7 +109,7 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 		} else if rf.log.entry(curLogIndex).Term != entry.Term {
 			Debug(dLog2, "S%d LogList cut from pos %d", rf.me, curLogIndex)
 
-			rf.log.cutEnd(curLogIndex-1) // FIXME check cutEnd
+			rf.log.cutEnd(curLogIndex - 1) // FIXME check cutEnd
 
 			Debug(dLog2, "S%d adding %d entries at LogList's pos %d",
 				rf.me, len(args.Entries[ind:]), rf.log.lastIndex()+1)
@@ -152,7 +151,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-
 func (rf *Raft) appendEntriesDaemon(term int) {
 
 	for !rf.killed() {
@@ -183,7 +181,7 @@ func (rf *Raft) sendHeartBeat(isHeartBeat bool) {
 	}
 }
 
-func (rf *Raft) sendHeartBeatToOne(server, term int)  {
+func (rf *Raft) sendHeartBeatToOne(server, term int) {
 	for !rf.killed() {
 		rf.mu.Lock()
 
@@ -199,13 +197,13 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 		}
 
 		var entries []LogEntry
-		prevTerm , prevLogIndex := 0, 0
+		prevTerm, prevLogIndex := 0, 0
 
 		Debug(dLeader, "S%d -> S%d sending HB at T%d, nxtInd:%d",
 			rf.me, server, term, nxtInd)
-		Debug(dLog, "S%d Leader Log-%v",rf.me, rf.log)
+		// Debug(dLog, "S%d Leader Log-%v", rf.me, rf.log)
 
-		if nxtInd <= 0 {  	// nxtInd should not be 0
+		if nxtInd <= 0 { // nxtInd should not be 0
 			Debug(dError, "S%d for S%d nxtInd is <= 0!!", rf.me, server)
 			panic("nxtInd")
 		}
@@ -242,7 +240,7 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 			potNext := args.PrevLogIndex + len(args.Entries) + 1
 			potMatch := potNext - 1
 
-			Debug(dInfo, "S%d <- S%d got successful AERpc reply." +
+			Debug(dInfo, "S%d <- S%d got successful AERpc reply."+
 				"potNxT-%d,potMat-%d, actNxt-%d, actMat-%d",
 				rf.me, server, potNext, potMatch, rf.nextIndex[server], rf.matchIndex[server])
 
@@ -251,7 +249,7 @@ func (rf *Raft) sendHeartBeatToOne(server, term int)  {
 			rf.mu.Unlock()
 			break
 		} else {
-			Debug(dInfo, "S%d <- S%d got unsuccessful AERpc reply:" +
+			Debug(dInfo, "S%d <- S%d got unsuccessful AERpc reply:"+
 				"conflictInd-%d, actNxt-%d, actMat-%d",
 				rf.me, server, reply.ConflictIndex, rf.nextIndex[server], rf.matchIndex[server])
 

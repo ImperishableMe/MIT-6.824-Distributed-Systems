@@ -98,7 +98,7 @@ func (kv *KVServer) handler(op Op, args interface{}, reply Reply) {
 	kv.mu.Unlock()
 
 	select {
-	case info := <-infoChan: // TODO: might get empty info if closed
+	case info := <-infoChan:
 		isInvalid := info.op.CmdType == "" || // channel closed
 			info.op.ClientID != op.ClientID || info.op.SeqNum != op.SeqNum
 
