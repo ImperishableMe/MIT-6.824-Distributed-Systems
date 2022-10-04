@@ -1,15 +1,15 @@
 package raft
 
 type InstallSnapshotArgs struct {
-	Term              	int
-	LastIncludedIndex 	int
-	LastIncludedTerm  	int
-	Data              	[]byte
+	Term              int
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Data              []byte
 }
 
 type InstallSnapshotReply struct {
-	Term              	int // currentTerm, for candidate to update itself
-	LastIncludedIndex 	int // needs this to update the leader properly
+	Term              int // currentTerm, for candidate to update itself
+	LastIncludedIndex int // needs this to update the leader properly
 }
 
 func (rf *Raft) sendInstallSnapshotRPC(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -29,7 +29,7 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 	reply.LastIncludedIndex = args.LastIncludedIndex
 
 	isNewSnapshot := rf.waitingSnapshot == nil ||
-		rf.waitingSnapshotTerm < rf.currentTerm ||       // snap of a previous Term ?
+		rf.waitingSnapshotTerm < rf.currentTerm || // snap of a previous Term ?
 		rf.waitingSnapshotIndex < args.LastIncludedIndex // snap of this term but old
 
 	Debug(dSnap, "S%d waitingSnapState: (Ind, Term, len): (%d, %d, %d)",
@@ -39,6 +39,8 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 		rf.waitingSnapshot = args.Data
 		rf.waitingSnapshotIndex = args.LastIncludedIndex
 		rf.waitingSnapshotTerm = args.LastIncludedTerm
+
+		rf.applierCond.Broadcast()
 
 		Debug(dSnap, "S%d accepted this snapshot", rf.me)
 	} else {
@@ -59,7 +61,9 @@ func (rf *Raft) installSnapshotL(server, term int) {
 	rf.mu.Unlock()
 
 	ok := rf.sendInstallSnapshotRPC(server, &args, &reply)
-	if !ok {return}
+	if !ok {
+		return
+	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -71,21 +75,21 @@ func (rf *Raft) installSnapshotL(server, term int) {
 	}
 	Debug(dSnap, "S%d <- S%d got successful ISRpc reply. LastIncludedInd: %d", rf.me, server, reply.LastIncludedIndex)
 
-	rf.nextIndex[server] = Max(rf.nextIndex[server], reply.LastIncludedIndex+ 1)
+	rf.nextIndex[server] = Max(rf.nextIndex[server], reply.LastIncludedIndex+1)
 	rf.matchIndex[server] = Max(rf.matchIndex[server], reply.LastIncludedIndex)
+	rf.updateCommitCond.Broadcast()
 }
 
 // CondInstallSnapshot
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
-//
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	Debug(dSnap, "S%d CondInstSnapshot from service at lastIncludInd-%d, lastIncludTerm-%d, logLastInd-%d T-d",
 		rf.me, lastIncludedIndex, lastIncludedTerm, rf.log.lastIndex())
 
-	if rf.lastApplied > lastIncludedIndex {			// TODO: check against appliedIndex
+	if rf.lastApplied > lastIncludedIndex { // TODO: check against appliedIndex
 		Debug(dDrop, "S%d Rejecting old snapshot", rf.me)
 		return false
 	}
@@ -144,5 +148,3 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	Debug(dSnap, "S%d Log After cutting at %d:  %v", rf.me, index, rf.log)
 	rf.persistWithSnapshotL()
 }
-
-

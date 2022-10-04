@@ -29,7 +29,11 @@ import (
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	mu sync.Mutex // Lock to protect shared access to this peer's state
+	// condition vars
+	updateCommitCond sync.Cond
+	applierCond      sync.Cond
+
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
@@ -160,6 +164,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 	rf.log = mkLogEmpty()
 
+	rf.updateCommitCond = *sync.NewCond(&rf.mu)
+	rf.applierCond = *sync.NewCond(&rf.mu)
+
 	rf.readPersist(persister.ReadRaftState())
 
 	rf.commitIndex = rf.snapshotIndex // TODO: initialize properly after snapshotting
@@ -172,7 +179,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(rf.peers))
 
 	rf.resettingElectionTimerL()
-
+	rf.lastHeartBeat = time.Now().Add(-ElectionTimeOutMin * time.Millisecond)
 	// initialize from state persisted before a crash
 
 	if rf.waitingSnapshot != nil {
@@ -186,10 +193,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) updateLeaderCommitIndex(term int) {
-
-	for !rf.killed() {
-		rf.mu.Lock()
-		if rf.state != Leader || rf.currentTerm != term {
+	rf.mu.Lock()
+	for {
+		if rf.state != Leader || rf.currentTerm != term || rf.killed() {
+			rf.applierCond.Broadcast()
 			rf.mu.Unlock()
 			break
 		}
@@ -207,13 +214,13 @@ func (rf *Raft) updateLeaderCommitIndex(term int) {
 				}
 				if count*2 > len(rf.peers) {
 					rf.commitIndex = i
+					rf.applierCond.Broadcast()
 					Debug(dCommit, "S%d leader at T%d committed upto %d\n",
 						rf.me, rf.currentTerm, rf.commitIndex)
 					break
 				}
 			}
 		}
-		rf.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
+		rf.updateCommitCond.Wait()
 	}
 }

@@ -1,13 +1,11 @@
 package raft
 
-import "time"
-
 type State string
 
 const (
-	Leader		State = "Leader"
-	Candidate	State = "Candidate"
-	Follower 	State = "Follower"
+	Leader    State = "Leader"
+	Candidate State = "Candidate"
+	Follower  State = "Follower"
 )
 
 // ApplyMsg
@@ -20,7 +18,6 @@ const (
 // in part 2D you'll want to send other kinds of messages (e.g.,
 // snapshots) on the applyCh, but set CommandValid to false for these
 // other uses.
-//
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -33,24 +30,32 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-
 func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 
 	defer close(applyCh)
+	rf.mu.Lock()
 
-	for !rf.killed() {
-		rf.mu.Lock()
+	for {
+		if rf.killed() {
+			rf.mu.Unlock()
+			break
+		}
+
 		if rf.waitingSnapshot != nil {
 			msg := ApplyMsg{
 				SnapshotValid: true,
-				Snapshot: rf.waitingSnapshot,
-				SnapshotTerm: rf.waitingSnapshotTerm,
+				Snapshot:      rf.waitingSnapshot,
+				SnapshotTerm:  rf.waitingSnapshotTerm,
 				SnapshotIndex: rf.waitingSnapshotIndex,
 			}
 			rf.waitingSnapshot = nil
 			rf.mu.Unlock()
 			applyCh <- msg
-		} else if rf.lastApplied < rf.commitIndex {
+			rf.mu.Lock()
+		}
+		// log is acquired
+
+		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
 			msg := ApplyMsg{
 				CommandValid: true,
@@ -62,10 +67,9 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 
 			rf.mu.Unlock()
 			applyCh <- msg
-		} else {
-			Debug(dInfo, "S%d Applier: lastApplied:%d, CommitInd:%d", rf.me, rf.lastApplied, rf.commitIndex)
-			rf.mu.Unlock()
-			time.Sleep(10 * time.Millisecond)  // nothing new, so wait 10ms and recheck
+			rf.mu.Lock()
 		}
+
+		rf.applierCond.Wait()
 	}
 }

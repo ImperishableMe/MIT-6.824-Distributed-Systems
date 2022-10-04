@@ -126,6 +126,7 @@ func (rf *Raft) AppendEntriesRequestHandler(args *AppendEntriesArgs, reply *Appe
 	// point 5
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = Min(args.LeaderCommit, lastNewInd)
+		rf.applierCond.Broadcast()
 	}
 	Debug(dCommit, "S%d commitIndex %d", rf.me, rf.commitIndex)
 
@@ -245,7 +246,10 @@ func (rf *Raft) sendHeartBeatToOne(server, term int) {
 				rf.me, server, potNext, potMatch, rf.nextIndex[server], rf.matchIndex[server])
 
 			rf.nextIndex[server] = Max(potNext, rf.nextIndex[server])
-			rf.matchIndex[server] = Max(potMatch, rf.matchIndex[server])
+			if rf.matchIndex[server] < potMatch {
+				rf.matchIndex[server] = potMatch
+				rf.updateCommitCond.Broadcast()
+			}
 			rf.mu.Unlock()
 			break
 		} else {
