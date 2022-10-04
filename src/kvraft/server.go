@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -40,18 +41,18 @@ type KVServer struct {
 	applyCh chan raft.ApplyMsg
 	dead    int32 // set by Kill()
 
-	maxraftstate int // snapshot if log grows this big
+	maxraftstate int // snapshot if log grows this big (-1 means no snapshot)
+	persister    *raft.Persister
 
 	// Your definitions here.
-	isLeader             bool
-	keyValue             map[string]string // holds the actual key->value
-	clientLastOpId       map[int64]int64   // maps RPC request id to Response
-	clientLastOpResponse map[int64]string  // maps RPC request id to Response
+	Db                   map[string]string // holds the actual key->value
+	ClientLastOpId       map[int64]int64   // maps RPC request id to Response
+	ClientLastOpResponse map[int64]string  // maps RPC request id to Response
 	cmdIndexDispatcher   map[int][]chan ChannelInfo
 }
 
 func (kv *KVServer) isDuplicateL(index, term int, op *Op, reply Reply) bool {
-	lastOpId, ok := kv.clientLastOpId[op.ClientID]
+	lastOpId, ok := kv.ClientLastOpId[op.ClientID]
 	Debug(dTrace, "S%d ReqID (%d,%d) state-(LastOpId, ok):(%v,%v)", kv.me, op.ClientID, op.SeqNum, lastOpId, ok)
 
 	if !ok {
@@ -63,7 +64,7 @@ func (kv *KVServer) isDuplicateL(index, term int, op *Op, reply Reply) bool {
 		Debug(dDrop, "S%d <- Cl(%d) Op(%d) dropped,  %v", kv.me, op.ClientID, op.SeqNum, op)
 		return true
 	} else if lastOpId == op.SeqNum {
-		reply.setValue(kv.clientLastOpResponse[op.ClientID])
+		reply.setValue(kv.ClientLastOpResponse[op.ClientID])
 		Debug(dServer, "S%d ReqID (%d,%d) Successfully done. Reply: %v", kv.me, op.ClientID, op.SeqNum, reply)
 		return true
 	}
@@ -178,28 +179,103 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
+	kv.persister = persister
 
 	// You may need initialization code here.
-	kv.keyValue = make(map[string]string)
-	kv.clientLastOpId = make(map[int64]int64)
-	kv.clientLastOpResponse = make(map[int64]string)
+	kv.Db = make(map[string]string)
+	kv.ClientLastOpId = make(map[int64]int64)
+	kv.ClientLastOpResponse = make(map[int64]string)
 	kv.cmdIndexDispatcher = make(map[int][]chan ChannelInfo)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
-	kv.isLeader = false
+	// TODO: read from persistent snapshot
+	kv.restoreState()
 	go kv.applier()
 	return kv
 }
 
+func (kv *KVServer) restoreState() {
+	snap := kv.persister.ReadSnapshot()
+
+	if snap == nil || len(snap) < 1 { // bootstrap without any state?
+		return
+	}
+	var tSnap []byte
+	var tSnapInd, tSnapTerm int
+
+	sr := bytes.NewBuffer(snap)
+	sd := labgob.NewDecoder(sr)
+
+	if sd.Decode(&tSnap) != nil ||
+		sd.Decode(&tSnapInd) != nil ||
+		sd.Decode(&tSnapTerm) != nil {
+	} else {
+		kv.readSnapshotL(tSnap)
+	}
+}
+
+func (kv *KVServer) createSnapshotL() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	e.Encode(kv.Db)
+	e.Encode(kv.ClientLastOpId)
+	e.Encode(kv.ClientLastOpResponse)
+
+	data := w.Bytes()
+	return data
+}
+
+func (kv *KVServer) readSnapshotL(snap []byte) {
+	if snap == nil || len(snap) < 1 {
+		return
+	}
+
+	r := bytes.NewBuffer(snap)
+	d := labgob.NewDecoder(r)
+
+	var db map[string]string
+	var cid map[int64]int64   // maps RPC request id to Response
+	var crep map[int64]string // maps RPC request id to Response
+
+	if d.Decode(&db) != nil ||
+		d.Decode(&cid) != nil ||
+		d.Decode(&crep) != nil {
+	} else {
+		kv.Db = db
+		kv.ClientLastOpId = cid
+		kv.ClientLastOpResponse = crep
+	}
+}
+
 func (kv *KVServer) applier() {
+	lastApplied := 0
+
 	for cmd := range kv.applyCh {
 		if cmd.CommandValid {
 			kv.mu.Lock()
 			kv.executeL(&cmd)
+			lastApplied = cmd.CommandIndex
 			kv.mu.Unlock()
+		} else if cmd.SnapshotValid {
+			kv.mu.Lock()
+			if kv.rf.CondInstallSnapshot(cmd.SnapshotTerm, cmd.SnapshotIndex, cmd.Snapshot) {
+				// no need to clear the pending reqs, they will either time out and get handled
+				kv.readSnapshotL(cmd.Snapshot)
+			}
+			kv.mu.Unlock()
+		}
+
+		if kv.maxraftstate != -1 && kv.persister.RaftStateSize() >= kv.maxraftstate {
+			// TODO: take a snapshot and pass it to raft using
+			// call rf.Snapshot()
+			kv.mu.Lock()
+			snap := kv.createSnapshotL()
+			kv.mu.Unlock()
+			kv.rf.Snapshot(lastApplied, snap)
 		}
 	}
 
@@ -215,7 +291,7 @@ func (kv *KVServer) applier() {
 }
 
 func (kv *KVServer) shouldExecuteL(clientId, seqNum int64) bool {
-	lastSeq, ok := kv.clientLastOpId[clientId]
+	lastSeq, ok := kv.ClientLastOpId[clientId]
 	return !ok || lastSeq < seqNum
 }
 
@@ -228,10 +304,10 @@ func (kv *KVServer) executeL(cmd *raft.ApplyMsg) {
 
 	defer func() {
 		for _, ch := range kv.cmdIndexDispatcher[cmd.CommandIndex] {
-			if kv.clientLastOpId[op.ClientID] != op.SeqNum {
+			if kv.ClientLastOpId[op.ClientID] != op.SeqNum {
 				panic("Does not have response")
 			}
-			ch <- ChannelInfo{op, kv.clientLastOpResponse[op.ClientID], cmd.CommandIndex}
+			ch <- ChannelInfo{op, kv.ClientLastOpResponse[op.ClientID], cmd.CommandIndex}
 			close(ch)
 		}
 		delete(kv.cmdIndexDispatcher, cmd.CommandIndex)
@@ -247,14 +323,14 @@ func (kv *KVServer) executeL(cmd *raft.ApplyMsg) {
 	switch op.CmdType {
 	case "Get":
 	case "Put":
-		kv.keyValue[key] = value
+		kv.Db[key] = value
 	case "Append":
-		kv.keyValue[key] += value
+		kv.Db[key] += value
 	}
 
-	kv.clientLastOpId[op.ClientID] = op.SeqNum
-	kv.clientLastOpResponse[op.ClientID] = kv.keyValue[key]
+	kv.ClientLastOpId[op.ClientID] = op.SeqNum
+	kv.ClientLastOpResponse[op.ClientID] = kv.Db[key]
 
 	Debug(dServer, "S%d values of states (clntLast, lastResponse): (%v,%v)",
-		kv.me, kv.clientLastOpId[op.ClientID], kv.clientLastOpResponse[op.ClientID])
+		kv.me, kv.ClientLastOpId[op.ClientID], kv.ClientLastOpResponse[op.ClientID])
 }
