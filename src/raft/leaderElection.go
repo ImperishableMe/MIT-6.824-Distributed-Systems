@@ -85,8 +85,8 @@ func (rf *Raft) newTermCheckL(foundTerm int) {
 // will be called holding the lock
 func (rf *Raft) resettingElectionTimerL() {
 	Debug(dTimer, "S%d is resetting Election timer.", rf.me)
-	rf.lastHeartBeat = time.Now().Add(-ElectionTimeOutMin * time.Millisecond)
-	// rf.lastHeartBeat = time.Now()
+	// rf.lastHeartBeat = time.Now().Add(-ElectionTimeOutMin * time.Millisecond)
+	rf.lastHeartBeat = time.Now()
 	rf.electionTimeOut = rand.Intn(ElectionTimeOutMax-ElectionTimeOutMin) +
 		ElectionTimeOutMin
 }
