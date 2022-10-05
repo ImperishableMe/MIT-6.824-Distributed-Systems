@@ -12,11 +12,11 @@ type Err string
 
 // Put or Append
 type PutAppendArgs struct {
-	Key   		string
-	Value 		string
-	Op    		string // "Put" or "Append"
-	ClientId 	int64
-	SeqNum 		int64
+	Key      string
+	Value    string
+	Op       string // "Put" or "Append"
+	ClientId int64
+	SeqNum   int64
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
@@ -34,13 +34,16 @@ func (par *PutAppendReply) setValue(value string) {
 	_ = value
 }
 
-type GetArgs struct {
-	Key 		string
-	ClientId 	int64
-	SeqNum 		int64
-	// You'll have to add definitions here.
+func (par *PutAppendReply) String() string {
+	return fmt.Sprintf("NA,%v", par.Err)
 }
 
+type GetArgs struct {
+	Key      string
+	ClientId int64
+	SeqNum   int64
+	// You'll have to add definitions here.
+}
 
 type GetReply struct {
 	Err   Err
@@ -51,6 +54,10 @@ func (par *GetReply) setErr(err Err) {
 	par.Err = err
 }
 
+func (par *GetReply) String() string {
+	return fmt.Sprintf("%v,%v", par.Value, par.Err)
+}
+
 func (par *GetReply) setValue(value string) {
 	par.Value = value
 }
@@ -58,15 +65,18 @@ func (par *GetReply) setValue(value string) {
 type Reply interface {
 	setValue(value string)
 	setErr(err Err)
+	String() string
 }
 
-func getHashcode (clientId, seqNum int64) string {
+func getHashcode(clientId, seqNum int64) string {
 	return fmt.Sprintf("%v,%v", clientId, seqNum)
 }
 
-func getId (code string) (int64, int64) {
+func getId(code string) (int64, int64) {
 	var clientId, seqNum int64
 	_, err := fmt.Sscanf(code, "%d,%d", &clientId, &seqNum)
-	if err != nil { panic("invalid decoding")}
+	if err != nil {
+		panic("invalid decoding")
+	}
 	return clientId, seqNum
 }

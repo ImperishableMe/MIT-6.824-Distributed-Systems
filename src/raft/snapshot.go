@@ -26,7 +26,7 @@ func (rf *Raft) InstallSnapshotHandler(args *InstallSnapshotArgs, reply *Install
 
 	rf.newTermCheckL(args.Term)
 	reply.Term = rf.currentTerm
-	reply.LastIncludedIndex = args.LastIncludedIndex
+	reply.LastIncludedIndex = rf.snapshotIndex // TODO: not sure, there might be some mistake
 
 	isNewSnapshot := rf.waitingSnapshot == nil ||
 		rf.waitingSnapshotTerm < rf.currentTerm || // snap of a previous Term ?

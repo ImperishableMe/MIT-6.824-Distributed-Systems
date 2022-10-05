@@ -60,7 +60,7 @@ func (kv *KVServer) isDuplicateL(index, term int, op *Op, reply Reply) bool {
 	}
 
 	if lastOpId > op.SeqNum {
-		reply.setErr("NoLeader")
+		reply.setErr("NoLeader") // does not matter what is in the reply, this client moved on already
 		Debug(dDrop, "S%d <- Cl(%d) Op(%d) dropped,  %v", kv.me, op.ClientID, op.SeqNum, op)
 		return true
 	} else if lastOpId == op.SeqNum {
@@ -105,10 +105,13 @@ func (kv *KVServer) handler(op Op, args interface{}, reply Reply) {
 
 		if isInvalid {
 			reply.setErr("NotLeader")
+			Debug(dDrop, "S%d <- Cl(%d) Op(%v) dropped", kv.me, op.ClientID, op)
 		} else {
 			reply.setValue(info.value)
+			Debug(dServer, "S%d ReqID (%d,%d) Successfully done. Reply: %v", kv.me, op.ClientID, op.SeqNum, reply)
 		}
 	case <-time.After(time.Millisecond * 500):
+		Debug(dTrace, "S%d Req (%v) timed out", kv.me, op)
 		kv.mu.Lock()
 		defer kv.mu.Unlock()
 
@@ -193,8 +196,16 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	// TODO: read from persistent snapshot
 	kv.restoreState()
+	kv.printPersistentState()
 	go kv.applier()
 	return kv
+}
+
+func (kv *KVServer) printPersistentState() {
+	Debug(dServer, "S%d restored state as follows", kv.me)
+	Debug(dServer, "S%d db %v", kv.me, kv.Db)
+	Debug(dServer, "S%d clientLastId %v", kv.me, kv.ClientLastOpId)
+	Debug(dServer, "S%d clientLastResponse %v", kv.me, kv.ClientLastOpResponse)
 }
 
 func (kv *KVServer) restoreState() {
@@ -258,13 +269,20 @@ func (kv *KVServer) applier() {
 		if cmd.CommandValid {
 			kv.mu.Lock()
 			kv.executeL(&cmd)
-			lastApplied = cmd.CommandIndex
+			lastApplied = raft.Max(lastApplied, cmd.CommandIndex)
+			Debug(dTrace, "S%d server lastapplied value %d", kv.me, lastApplied)
 			kv.mu.Unlock()
 		} else if cmd.SnapshotValid {
 			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(cmd.SnapshotTerm, cmd.SnapshotIndex, cmd.Snapshot) {
 				// no need to clear the pending reqs, they will either time out and get handled
+				Debug(dServer, "S%d switching to raft snapshot %v", kv.me, cmd)
 				kv.readSnapshotL(cmd.Snapshot)
+				lastApplied = raft.Max(lastApplied, cmd.SnapshotIndex)
+				Debug(dTrace, "S%d server lastapplied value %d", kv.me, lastApplied)
+				kv.printPersistentState()
+			} else {
+				Debug(dDrop, "S%d Dropping old snapshot %v", kv.me, cmd)
 			}
 			kv.mu.Unlock()
 		}
@@ -273,6 +291,7 @@ func (kv *KVServer) applier() {
 			// TODO: take a snapshot and pass it to raft using
 			// call rf.Snapshot()
 			kv.mu.Lock()
+			Debug(dServer, "S%d Creating a snapshot upto index %d as (%d >= %d)", kv.me, lastApplied, kv.persister.RaftStateSize(), kv.maxraftstate)
 			snap := kv.createSnapshotL()
 			kv.mu.Unlock()
 			kv.rf.Snapshot(lastApplied, snap)
@@ -331,6 +350,8 @@ func (kv *KVServer) executeL(cmd *raft.ApplyMsg) {
 	kv.ClientLastOpId[op.ClientID] = op.SeqNum
 	kv.ClientLastOpResponse[op.ClientID] = kv.Db[key]
 
-	Debug(dServer, "S%d values of states (clntLast, lastResponse): (%v,%v)",
-		kv.me, kv.ClientLastOpId[op.ClientID], kv.ClientLastOpResponse[op.ClientID])
+	Debug(dServer, "S%d values of states (clntLast): (%v)",
+		kv.me, kv.ClientLastOpId[op.ClientID])
+	// Debug(dServer, "S%d values of states (clntLast, lastResponse): (%v,%v)",
+	// 	kv.me, kv.ClientLastOpId[op.ClientID], kv.ClientLastOpResponse[op.ClientID])
 }

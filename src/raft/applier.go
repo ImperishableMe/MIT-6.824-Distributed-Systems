@@ -48,6 +48,8 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 				SnapshotTerm:  rf.waitingSnapshotTerm,
 				SnapshotIndex: rf.waitingSnapshotIndex,
 			}
+			Debug(dCommit, "S%d raft sending snap to service (snapI, snapT): (%d,%d)",
+				rf.me, msg.SnapshotIndex, msg.SnapshotTerm)
 			rf.waitingSnapshot = nil
 			rf.mu.Unlock()
 			applyCh <- msg
@@ -62,7 +64,7 @@ func (rf *Raft) applyDaemon(applyCh chan ApplyMsg) {
 				Command:      rf.log.entry(rf.lastApplied).Cmd,
 				CommandIndex: rf.lastApplied,
 			}
-			Debug(dCommit, "S%d applied new cmd-%v, cmdInd-%d",
+			Debug(dCommit, "S%d raft applied new cmd-%v, cmdInd-%d",
 				rf.me, msg.Command, msg.CommandIndex)
 
 			rf.mu.Unlock()
