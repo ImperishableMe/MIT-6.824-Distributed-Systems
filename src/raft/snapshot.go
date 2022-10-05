@@ -53,6 +53,7 @@ func (rf *Raft) installSnapshotL(server, term int) {
 		Data:              rf.snapshot,
 		LastIncludedIndex: rf.snapshotIndex,
 		LastIncludedTerm:  rf.snapshotTerm,
+		Term:              rf.currentTerm,
 	}
 	reply := InstallSnapshotReply{}
 	Debug(dSnap, "S%d -> S%d sending InstallSnapshot RPC, (snapI, snapT, snapLen) - (%d, %d, %d)",

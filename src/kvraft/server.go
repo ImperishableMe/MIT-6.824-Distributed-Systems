@@ -276,7 +276,7 @@ func (kv *KVServer) applier() {
 			kv.mu.Lock()
 			if kv.rf.CondInstallSnapshot(cmd.SnapshotTerm, cmd.SnapshotIndex, cmd.Snapshot) {
 				// no need to clear the pending reqs, they will either time out and get handled
-				Debug(dServer, "S%d switching to raft snapshot %v", kv.me, cmd)
+				Debug(dServer, "S%d switching to raft snapshot (snapI, snapT):(%d,%d)", kv.me, cmd.SnapshotIndex, cmd.SnapshotTerm)
 				kv.readSnapshotL(cmd.Snapshot)
 				lastApplied = raft.Max(lastApplied, cmd.SnapshotIndex)
 				Debug(dTrace, "S%d server lastapplied value %d", kv.me, lastApplied)

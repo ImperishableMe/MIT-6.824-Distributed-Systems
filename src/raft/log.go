@@ -3,19 +3,18 @@ package raft
 import "fmt"
 
 type LogEntry struct {
-	Cmd interface{}
+	Cmd  interface{}
 	Term int
 }
 
-
 type Log struct {
 	LogList []LogEntry
-	Ind0    int         // position of first entry of LogList in actual log
+	Ind0    int // position of first entry of LogList in actual log
 }
 
-func (l *Log) String() string {
+func (l Log) String() string {
 	var str string
-	str = fmt.Sprintf("(st-en):(%d-%d), len-%d ||||| [", l.Ind0, l.lastIndex(), l.lastIndex() - l.Ind0 + 1)
+	str = fmt.Sprintf("(st-en):(%d-%d), len-%d ||||| [", l.Ind0, l.lastIndex(), l.lastIndex()-l.Ind0+1)
 
 	if len(l.LogList) <= 10 {
 		for ind, val := range l.LogList {
@@ -35,11 +34,11 @@ func (l *Log) String() string {
 	return str
 }
 
-func mkLogEmpty() Log{
+func mkLogEmpty() Log {
 	return Log{make([]LogEntry, 1), 0}
 }
 
-func mkLog(entries []LogEntry, ind0 int) Log{
+func mkLog(entries []LogEntry, ind0 int) Log {
 	return Log{entries, ind0}
 }
 
@@ -62,7 +61,7 @@ func (l *Log) cutEnd(index int) {
 		fmt.Printf("ind:%d < log_st:%d\n", index, l.Ind0)
 		panic("Big Log")
 	}
-	l.LogList = l.LogList[0: index - l.Ind0 + 1]
+	l.LogList = l.LogList[0 : index-l.Ind0+1]
 }
 
 //func (l *Log) cutStart(index int) {
@@ -76,7 +75,7 @@ func (l *Log) cutStart(index int) {
 
 	l.LogList = l.LogList[index-l.Ind0:]
 	l.Ind0 = index
-	if len(l.LogList) != l.lastIndex() - l.Ind0 + 1 {
+	if len(l.LogList) != l.lastIndex()-l.Ind0+1 {
 		panic("Log cut is not consistent")
 	}
 }
