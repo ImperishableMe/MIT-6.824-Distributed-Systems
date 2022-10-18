@@ -106,11 +106,12 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 
 	if lastIncludedIndex > rf.log.lastIndex() {
 		rf.log = mkLog(
-			[]LogEntry{{Cmd: nil, Term: lastIncludedTerm}},
-			lastIncludedIndex,
+			[]LogEntry{{Cmd: nil, Term: rf.snapshotTerm}},
+			rf.snapshotIndex,
 		)
 	} else {
 		rf.log.cutStart(rf.snapshotIndex)
+		rf.log.entry(rf.snapshotIndex).Term = rf.snapshotTerm
 	}
 	Debug(dSnap, "S%d Log After cutting at %d:  %v", rf.me, rf.snapshotIndex, rf.log)
 	rf.persistWithSnapshotL()
