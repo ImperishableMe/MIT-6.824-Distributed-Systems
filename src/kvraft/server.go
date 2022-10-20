@@ -324,9 +324,12 @@ func (kv *KVServer) executeL(cmd *raft.ApplyMsg) {
 	defer func() {
 		for _, ch := range kv.cmdIndexDispatcher[cmd.CommandIndex] {
 			if kv.ClientLastOpId[op.ClientID] != op.SeqNum {
-				panic("Does not have response")
+				// Debug(dTrace, "S%d fail at Op %v, last_id %v", kv.me, op, kv.ClientLastOpId[op.ClientID])
+				// panic("Does not have response")
+				ch <- ChannelInfo{}
+			} else {
+				ch <- ChannelInfo{op, kv.ClientLastOpResponse[op.ClientID], cmd.CommandIndex}
 			}
-			ch <- ChannelInfo{op, kv.ClientLastOpResponse[op.ClientID], cmd.CommandIndex}
 			close(ch)
 		}
 		delete(kv.cmdIndexDispatcher, cmd.CommandIndex)
